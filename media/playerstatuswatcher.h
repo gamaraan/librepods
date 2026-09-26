@@ -22,7 +22,7 @@ private slots:
 private:
     void updateStatus();
     QString m_playerService;
-    // Same defensive default-init as blemanager.h (iter-57): the ctor
+    // Defensive default-init: the ctor
     // body assigns these via parented `new`, but a partial-construction
     // failure or a future ctor-overload that skips the body would leave
     // updateStatus() dereferencing a dangling pointer.

@@ -16,6 +16,7 @@
 #include <fcntl.h>
 #include <memory>
 #include <unistd.h>
+#include <QBluetoothDeviceInfo>
 #include <QBluetoothLocalDevice>
 #include <QBluetoothSocket>
 #include <QQuickWindow>
@@ -43,8 +44,6 @@
 #include "deviceinfo.hpp"
 #include "ipcpath.hpp"
 #include "ipcverb.hpp"
-#include "ble/blemanager.h"
-#include "ble/bleutils.h"
 #include "QRCodeImageProvider.hpp"
 #include "systemsleepmonitor.hpp"
 #include "controlreconnect.hpp"
@@ -72,7 +71,7 @@ public:
     AirPodsTrayApp(bool debugMode, bool hideOnStart, bool headless, QQmlApplicationEngine *parent = nullptr)
         : QObject(parent), debugMode(debugMode), m_settings(new QSettings("AirPodsTrayApp", "AirPodsTrayApp"))
         , m_autoStartManager(new AutoStartManager(this)), m_hideOnStart(hideOnStart), parent(parent)
-        , m_deviceInfo(new DeviceInfo(this)), m_bleManager(new BleManager(this))
+        , m_deviceInfo(new DeviceInfo(this))
         , m_systemSleepMonitor(new SystemSleepMonitor(this)), m_notifier(new Notifier(this))
     {
         QLoggingCategory::setFilterRules(QString("openpods.debug=%1").arg(debugMode ? "true" : "false"));
@@ -130,7 +129,6 @@ public:
                 this, &AirPodsTrayApp::checkControlLinkWatchdog);
         m_controlWatchdogTimer->start();
 
-        connect(m_bleManager, &BleManager::deviceFound, this, &AirPodsTrayApp::bleDeviceFound);
         connect(m_deviceInfo->getBattery(), &Battery::primaryChanged, this, &AirPodsTrayApp::primaryChanged);
         connect(m_systemSleepMonitor, &SystemSleepMonitor::systemGoingToSleep, this, &AirPodsTrayApp::onSystemGoingToSleep);
         connect(m_systemSleepMonitor, &SystemSleepMonitor::systemWakingUp, this, &AirPodsTrayApp::onSystemWakingUp);
@@ -686,43 +684,24 @@ public slots:
     int loadRetryAttempts() const { return m_settings->value("bluetooth/retryAttempts", 3).toInt(); }
     void saveRetryAttempts(int attempts) { m_settings->setValue("bluetooth/retryAttempts", attempts); }
 
-    // Discovery stays off for the whole time the control link is up, whatever controller this box has.
-    void stopBleScanWhileConnected()
-    {
-        if (!areAirpodsConnected() || !m_bleManager->isScanning())
-            return;
-
-        LOG_INFO("Stopping BLE scan while AirPods control link is connected");
-        m_bleManager->stopScan();
-    }
-
     void onSystemGoingToSleep()
     {
         m_isSuspending = true;
-        if (m_bleManager->isScanning())
-        {
-            LOG_INFO("Stopping BLE scan before going to sleep");
-            m_bleManager->stopScan();
-        }
     }
     void onSystemWakingUp()
     {
-        LOG_INFO("System wake-up; deferring BLE rediscovery 2s for BlueZ to settle");
+        LOG_INFO("System wake-up; waiting 2s for BlueZ to settle");
 
         // BlueZ + the kernel BT controller often need ~1-3s after resume
-        // before hci0 is responsive again. Firing scan + GetManagedObjects
+        // before hci0 is responsive again. Firing GetManagedObjects
         // immediately on the PrepareForSleep:false signal races the stack
-        // and the first scan typically returns no devices. Wait a beat,
-        // and keep m_isSuspending true until the grace window closes so
-        // the disconnect notifications that BlueZ fires during resume
-        // don't surface as user-visible "AirPods Disconnected" toasts.
+        // and finds no devices. Wait a beat, and keep m_isSuspending true
+        // until the grace window closes so the disconnect notifications
+        // that BlueZ fires during resume don't surface as user-visible
+        // "AirPods Disconnected" toasts.
         QTimer::singleShot(2000, this, [this]() {
-            // Suspend stopped discovery on every controller, so resume restarts it and the gate below re-applies.
-            m_bleManager->startScan();
-
             if (areAirpodsConnected() && m_deviceInfo && !m_deviceInfo->bluetoothAddress().isEmpty())
             {
-                stopBleScanWhileConnected();
                 LOG_INFO("AirPods already connected after wake-up, re-activating A2DP profile");
                 // Profile may have been dropped during suspend; reassert.
                 QTimer::singleShot(1000, this, [this]() {
@@ -859,7 +838,6 @@ private slots:
 
         // Clear the device name and model
         m_deviceInfo->reset();
-        m_bleManager->startScan();
         emit airPodsStatusChanged();
 
         // Skip the disconnect toast if we're suspending/resuming — BlueZ
@@ -895,13 +873,8 @@ private slots:
             return;
         }
 
-        const bool bleScanWasActive = m_bleManager->isScanning();
-
-        // A live scan delays the L2CAP connect this recovery depends on, so pause it and restore after.
-        m_bleManager->stopScan();
-
         if (!m_controlRecovery.isActive()) {
-            m_controlRecovery.begin(bleScanWasActive);
+            m_controlRecovery.begin();
             m_disconnectFinalized = false;
             LOG_INFO("Scheduling AirPods control reconnect after " << reason);
             m_controlReconnectTimer->start(ControlReconnect::firstDelayMs);
@@ -1013,13 +986,8 @@ private slots:
         }
 
         m_controlReconnectTimer->stop();
-        const bool restoreBleScan = m_controlRecovery.complete();
+        m_controlRecovery.complete();
         m_disconnectFinalized = false;
-        if (restoreBleScan) {
-            m_bleManager->startScan();
-        } else {
-            m_bleManager->stopScan();
-        }
         LOG_INFO("AirPods control link recovered");
 
         // onDeviceDisconnected cancelled any in-flight activation, and a recovering connect skips the usual retry.
@@ -1140,7 +1108,6 @@ private slots:
             if (localSocket->property("openpodsControlRecovery").toBool()) {
                 finishControlRecovery();
             }
-            stopBleScanWhileConnected();
             connect(localSocket, &QBluetoothSocket::readyRead, this, [this, localSocket]()
                     {
             QByteArray data = localSocket->readAll();
@@ -1344,7 +1311,6 @@ private slots:
             {
                 mediaController->setConnectedDeviceMacAddress(m_deviceInfo->bluetoothAddress().replace(":", "_"));
             }
-            stopBleScanWhileConnected();
             emit airPodsStatusChanged();
         }
         else if (data.startsWith(AirPodsPackets::OneBudANCMode::HEADER)) {
@@ -1488,36 +1454,6 @@ private slots:
         QMetaObject::invokeMethod(this, "handlePhonePacket", Qt::QueuedConnection, Q_ARG(QByteArray, data));
     }
 
-    void bleDeviceFound(const BleInfo &device)
-    {
-        if (BLEUtils::isValidIrkRpa(m_deviceInfo->magicAccIRK(), device.address)) {
-            LOG_DEBUG("BLE adv accepted caseBattery=" << device.caseBattery << " charge=" << device.caseCharging << " primaryLeft=" << device.primaryLeft);
-            // Only adopt the BLE-broadcast model when it's actually
-            // recognized. AirPods Pro 3 (and any future model whose
-            // manufacturer-data fingerprint hasn't been added to
-            // ble/blemanager.cpp's modelMap yet) reports Unknown here,
-            // which would otherwise clobber a valid model from the
-            // AAP metadata packet on the L2CAP side.
-            if (device.modelName != AirPodsModel::Unknown) {
-                m_deviceInfo->setModel(device.modelName);
-            }
-            auto decryptet = BLEUtils::decryptLastBytes(device.encryptedPayload, m_deviceInfo->magicAccEncKey());
-            m_deviceInfo->getBattery()->parseEncryptedPacket(decryptet, device.primaryLeft, device.isThisPodInTheCase, isModelHeadset(m_deviceInfo->model()));
-            // Case battery isn't covered by parseEncryptedPacket when
-            // pods are out of the case (podInCase=false), so feed the
-            // BLE-broadcast case nibble in directly. device.caseBattery
-            // is -1 when the broadcast nibble was 15 (unknown); the
-            // setter skips those so we don't clobber a valid prior
-            // reading.
-            // A Max has no case, and its nibble decodes to 0 rather than the 15 that means unknown.
-            if (!isModelHeadset(m_deviceInfo->model())) {
-                m_deviceInfo->getBattery()->setCaseFromBle(device.caseBattery, device.caseCharging);
-            }
-            m_deviceInfo->getEarDetection()->overrideEarDetectionStatus(device.isPrimaryInEar, device.isSecondaryInEar);
-            m_lidState = device.lidState;
-        }
-    }
-
 public:
     void handleMediaStateChange(MediaController::MediaState state) {
         // Grabbing the pods off whatever holds them is the cross-device feature, not a
@@ -1594,12 +1530,6 @@ public:
         connectToPhone();
 
         m_deviceInfo->loadFromSettings(*m_settings);
-        // Unreachable with the pods already connected: the constructor returns before this.
-        QTimer::singleShot(ScanDuty::bootDelayMs, this, [this]() {
-            // Pods that connected during the delay keep discovery off, as stopBleScanWhileConnected does.
-            if (!areAirpodsConnected())
-                m_bleManager->startScan();
-        });
     }
 
     // Null engine is the headless run, where there is no window to open and nothing to say about it.
@@ -1771,8 +1701,6 @@ public:
         // 0 = PauseWhenOneRemoved, 1 = PauseWhenBothRemoved,
         // 2 = Disabled (matches MediaController::EarDetectionBehavior).
         status.insert("ear_detection_behavior", earDetectionBehavior());
-        // 0 = open, 1 = closed, 2 = unknown (matches BleInfo::LidState).
-        status.insert("lid_state", lidState());
         return status;
     }
 
@@ -1806,15 +1734,10 @@ public:
         }
     }
 
-    // 0 open, 1 closed, 2 unknown, matching BleInfo::LidState.
-    int lidState() const { return static_cast<int>(m_lidState); }
 private:
     bool m_hideOnStart = false;
     QByteArray m_lastState;
-    // Lid only moves on a BLE advertisement, so this stays UNKNOWN until one arrives.
-    BleInfo::LidState m_lidState = BleInfo::LidState::UNKNOWN;
     DeviceInfo *m_deviceInfo;
-    BleManager *m_bleManager;
     SystemSleepMonitor *m_systemSleepMonitor = nullptr;
     Notifier *m_notifier = nullptr;
     QString m_phoneMacStatus;
@@ -2014,7 +1937,7 @@ int main(int argc, char *argv[]) {
     }
 
     // Defer Main.qml load when --hide. The daemon's tray icon + low-
-    // battery toast + status IPC + AAP/BLE paths are all pure C++ —
+    // battery toast + status IPC + AAP paths are all pure C++ —
     // no QML root needed until the user explicitly opens the window.
     // Loading Main.qml eagerly costs ~60-100 MB of QML engine
     // overhead (Qt's QML runtime + Material/Basic style + every

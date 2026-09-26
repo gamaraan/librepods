@@ -17,7 +17,9 @@ does not have them, so nothing packaged will do.
   **`ear:`** control verbs (upstream has only the noise verbs).
 - **AirPods Pro 3 support** and a current model map, including a
   `supports_noise_off` flag (the Pro 3 has no Off mode).
-- **Case-lid state** from BLE advertisements.
+- **No BLE scanning.** Status comes only over the connection to the pods, so
+  the daemon never runs Bluetooth discovery, which stopped bonded LE mice from
+  reconnecting.
 - The **control socket moved off `/tmp`** to `$XDG_RUNTIME_DIR/librepods.sock`
   (mode 0700).
 - A **systemd user unit** bound to `graphical-session.target`, and a
@@ -38,7 +40,7 @@ systemctl --user restart librepods.service
 ```
 
 Dependencies (Arch): `cmake`, `ninja`, `pkgconf`, `qt6-connectivity`,
-`qt6-tools`, `qt6-declarative`, `libpulse`, `openssl`.
+`qt6-tools`, `qt6-declarative`, `libpulse`.
 
 `~/.local` is the prefix the unit expects (`%h/.local/bin/librepods`).
 

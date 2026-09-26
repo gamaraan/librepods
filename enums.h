@@ -135,8 +135,6 @@ namespace AirpodsTrayApp
             return QString();
         }
 
-        // TODO: Only used for parseEncryptedPacket for battery status. Is it possible to determine this
-        // from the data in the packet rather than by model? i.e number of batteries
         inline bool isModelHeadset(AirPodsModel model) {
             switch (model) {
                 case AirPodsModel::AirPodsMaxLightning:

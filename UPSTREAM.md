@@ -31,7 +31,10 @@ matter to this widget:
 - **AirPods Pro 3 support**, including the `A3064` model map and a
   `supports_noise_off` flag, because the Pro 3 has no Off listening mode and
   silently ignores the packet.
-- **Case lid state** reported from the BLE advertisement.
+- **No BLE scanning.** Status comes only over the L2CAP connection to the
+  pods. The discovery that read battery from advertisements while the pods
+  were away kept bonded LE mice from reconnecting, so it and the lid state it
+  carried are gone.
 - **The control socket moved off `/tmp`** to `$XDG_RUNTIME_DIR/librepods.sock`,
   which is mode 0700, and both binaries refuse to fall back.
 - **A systemd user unit**, bound to `graphical-session.target`.

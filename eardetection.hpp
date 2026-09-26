@@ -49,13 +49,6 @@ public:
 
         return true;
     }
-    void overrideEarDetectionStatus(bool primaryInEar, bool secondaryInEar)
-    {
-        primaryStatus = primaryInEar ? EarDetectionStatus::InEar : EarDetectionStatus::NotInEar;
-        secondaryStatus = secondaryInEar ? EarDetectionStatus::InEar : EarDetectionStatus::NotInEar;
-        emit statusChanged();
-    }
-
     bool isPrimaryInEar() const { return primaryStatus == EarDetectionStatus::InEar; }
     bool isSecondaryInEar() const { return secondaryStatus == EarDetectionStatus::InEar; }
     bool oneOrMorePodsInCase() const { return primaryStatus == EarDetectionStatus::InCase || secondaryStatus == EarDetectionStatus::InCase; }

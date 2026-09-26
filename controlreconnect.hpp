@@ -60,11 +60,10 @@ inline bool hasAttemptRemaining(int completedAttempts, int maximumAttempts)
 class Session
 {
 public:
-    void begin(bool bleScanWasActive)
+    void begin()
     {
         reset();
         m_state = State::Waiting;
-        m_restoreBleScan = bleScanWasActive;
     }
 
     bool isActive() const { return m_state != State::Idle; }
@@ -111,12 +110,7 @@ public:
         return true;
     }
 
-    bool complete()
-    {
-        const bool restoreBleScan = m_restoreBleScan;
-        reset();
-        return restoreBleScan;
-    }
+    void complete() { reset(); }
 
     void cancel() { reset(); }
 
@@ -126,14 +120,12 @@ private:
         m_state = State::Idle;
         m_absentProbes = 0;
         m_connectedAttempts = 0;
-        m_restoreBleScan = false;
         ++m_generation;
     }
 
     State m_state = State::Idle;
     int m_absentProbes = 0;
     int m_connectedAttempts = 0;
-    bool m_restoreBleScan = false;
     std::uint64_t m_generation = 0;
 };
 }
