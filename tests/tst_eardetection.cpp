@@ -123,22 +123,6 @@ private slots:
         QCOMPARE(d.getsecondaryStatus(), Status::Disconnected);
         QVERIFY(!d.oneOrMorePodsInEar());
     }
-
-    void overrideMatchesProtocol()
-    {
-        EarDetection d;
-        QSignalSpy spy(&d, &EarDetection::statusChanged);
-
-        d.overrideEarDetectionStatus(true, false);
-        QCOMPARE(d.getprimaryStatus(), Status::InEar);
-        QCOMPARE(d.getsecondaryStatus(), Status::NotInEar);
-        QCOMPARE(spy.count(), 1);
-
-        d.overrideEarDetectionStatus(false, true);
-        QCOMPARE(d.getprimaryStatus(), Status::NotInEar);
-        QCOMPARE(d.getsecondaryStatus(), Status::InEar);
-        QCOMPARE(spy.count(), 2);
-    }
 };
 
 QTEST_GUILESS_MAIN(TestEarDetection)

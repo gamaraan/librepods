@@ -61,7 +61,7 @@ private slots:
     void tracksRecoveryLifecycle()
     {
         ControlReconnect::Session session;
-        session.begin(true);
+        session.begin();
         QCOMPARE(session.state(), ControlReconnect::State::Waiting);
 
         const auto firstProbe = session.beginProbe();
@@ -77,7 +77,7 @@ private slots:
         const auto secondProbe = session.beginProbe();
         QVERIFY(session.acceptsProbe(secondProbe));
         QVERIFY(!session.acceptsProbe(firstProbe));
-        QVERIFY(session.complete());
+        session.complete();
         QCOMPARE(session.state(), ControlReconnect::State::Idle);
         QVERIFY(!session.acceptsProbe(secondProbe));
     }
@@ -85,18 +85,17 @@ private slots:
     void stopsRetryingAtTheAttemptLimit()
     {
         ControlReconnect::Session session;
-        session.begin(false);
+        session.begin();
         QVERIFY(session.prepareRetry(2, false));
         QVERIFY(session.prepareRetry(2, false));
         QVERIFY(!session.prepareRetry(2, false));
         QCOMPARE(session.absentProbes(), 2);
-        QVERIFY(!session.complete());
     }
 
     void outlastsTheAbsentLimitWhileBlueZReportsTheDeviceConnected()
     {
         ControlReconnect::Session session;
-        session.begin(false);
+        session.begin();
 
         for (int i = 0; i < ControlReconnect::connectedAttemptLimit; ++i) {
             QVERIFY(session.prepareRetry(1, true));
@@ -107,7 +106,7 @@ private slots:
     void stopsRetryingWhenTheDeviceNeverAcceptsTheSocket()
     {
         ControlReconnect::Session session;
-        session.begin(false);
+        session.begin();
 
         for (int i = 0; i < ControlReconnect::connectedAttemptLimit; ++i) {
             QVERIFY(session.prepareRetry(3, true));
@@ -119,7 +118,7 @@ private slots:
     void aLimitOfZeroRefusesEveryAbsentRetry()
     {
         ControlReconnect::Session session;
-        session.begin(false);
+        session.begin();
         QVERIFY(!session.prepareRetry(0, false));
         QCOMPARE(session.absentProbes(), 0);
     }
@@ -127,13 +126,13 @@ private slots:
     void aRestartedSessionGetsBothBudgetsBack()
     {
         ControlReconnect::Session session;
-        session.begin(false);
+        session.begin();
         QVERIFY(session.prepareRetry(1, false));
         QVERIFY(session.prepareRetry(1, true));
         QVERIFY(!session.prepareRetry(1, false));
 
         // begin() on a session that is still active must not inherit the spent budget.
-        session.begin(false);
+        session.begin();
         QCOMPARE(session.absentProbes(), 0);
         QCOMPARE(session.connectedAttempts(), 0);
         QVERIFY(session.prepareRetry(1, false));
@@ -143,7 +142,7 @@ private slots:
     void countsOnlyTheRetriesTakenWhileBlueZReportsTheDeviceGone()
     {
         ControlReconnect::Session session;
-        session.begin(false);
+        session.begin();
 
         QVERIFY(session.prepareRetry(2, false));
         QVERIFY(session.prepareRetry(2, true));
@@ -156,7 +155,7 @@ private slots:
     void aCancelledSessionCannotBeRetried()
     {
         ControlReconnect::Session session;
-        session.begin(true);
+        session.begin();
         const auto probe = session.beginProbe();
 
         session.cancel();
@@ -164,20 +163,19 @@ private slots:
         QVERIFY(!session.isActive());
         QVERIFY(!session.acceptsProbe(probe));
         QVERIFY(!session.prepareRetry(3, false));
-        QVERIFY(!session.complete());
     }
 
     void aProbeFromASupersededSessionIsRejected()
     {
         ControlReconnect::Session session;
-        session.begin(true);
+        session.begin();
         const auto firstProbe = session.beginProbe();
 
         // Production only restarts a session after finalize cancels it, so drive that order.
         session.cancel();
         QVERIFY(!session.acceptsProbe(firstProbe));
 
-        session.begin(true);
+        session.begin();
         QVERIFY(!session.acceptsProbe(firstProbe));
 
         const auto secondProbe = session.beginProbe();

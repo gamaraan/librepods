@@ -157,70 +157,6 @@ public:
         return true;
     }
 
-    // Sample input: 16 decrypted bytes, [1] and [2] the pods (a headset uses [1] alone), [3] the case, high bit charging.
-    bool parseEncryptedPacket(const QByteArray &packet, bool isLeftPodPrimary, bool podInCase, bool isHeadset)
-    {
-        // Validate packet size (expect 16 bytes based on provided payloads)
-        if (packet.size() != 16)
-        {
-            return false;
-        }
-
-        // Determine byte indices based on isFlipped
-        int leftByteIndex = isLeftPodPrimary ? 1 : 2;
-        int rightByteIndex = isLeftPodPrimary ? 2 : 1;
-
-        // Extract raw battery bytes
-        unsigned char rawLeftBatteryByte = static_cast<unsigned char>(packet.at(leftByteIndex));
-        unsigned char rawRightBatteryByte = static_cast<unsigned char>(packet.at(rightByteIndex));
-        unsigned char rawCaseBatteryByte = static_cast<unsigned char>(packet.at(3));
-
-        // Extract battery data (charging status and raw level 0-127)
-        auto [isLeftCharging, rawLeftBattery] = formatBattery(rawLeftBatteryByte);
-        auto [isRightCharging, rawRightBattery] = formatBattery(rawRightBatteryByte);
-        auto [isCaseCharging, rawCaseBattery] = formatBattery(rawCaseBatteryByte);
-        if (isHeadset) {
-            // A headset keeps its one battery in byte 1, and the primary flip only renames that byte.
-            auto [headsetCharging, headsetLevel] =
-                formatBattery(static_cast<unsigned char>(packet.at(1)));
-            primaryPod = Component::Headset;
-            // formatBattery masks to 0-127, so this also drops the 0x7F that means unknown.
-            if (headsetLevel <= 100) {
-                states[Component::Headset] = {static_cast<quint8>(headsetLevel),
-                    headsetCharging ? BatteryStatus::Charging : BatteryStatus::Discharging};
-            }
-        } else {
-            if (rawLeftBattery == CHAR_MAX) {
-                rawLeftBattery = states.value(Component::Left).level; // Use last valid level
-                isLeftCharging = states.value(Component::Left).status == BatteryStatus::Charging;
-            }
-
-            if (rawRightBattery == CHAR_MAX) {
-                rawRightBattery = states.value(Component::Right).level; // Use last valid level
-                isRightCharging = states.value(Component::Right).status == BatteryStatus::Charging;
-            }
-
-            if (rawCaseBattery == CHAR_MAX) {
-                rawCaseBattery = states.value(Component::Case).level; // Use last valid level
-                isCaseCharging = states.value(Component::Case).status == BatteryStatus::Charging;
-            }
-
-            // Update states
-            states[Component::Left] = {static_cast<quint8>(rawLeftBattery), isLeftCharging ? BatteryStatus::Charging : BatteryStatus::Discharging};
-            states[Component::Right] = {static_cast<quint8>(rawRightBattery), isRightCharging ? BatteryStatus::Charging : BatteryStatus::Discharging};
-            // Only a docked pod can read the case, so the payload's 0 there means unknown and writing it would publish a flat case and trip the low-battery latch.
-            if ((rawCaseBattery > 0 || podInCase) && rawCaseBattery <= 100) {
-                states[Component::Case] = {static_cast<quint8>(rawCaseBattery), isCaseCharging ? BatteryStatus::Charging : BatteryStatus::Discharging};
-            }
-            primaryPod = isLeftPodPrimary ? Component::Left : Component::Right;
-            secondaryPod = isLeftPodPrimary ? Component::Right : Component::Left;
-        }
-        emit batteryStatusChanged();
-        emit primaryChanged();
-
-        return true;
-    }
-
     // Get the raw state for a component
     BatteryState getState(Component comp) const
     {
@@ -268,25 +204,6 @@ public:
     bool isCaseCharging() const { return isStatus(Component::Case, BatteryStatus::Charging); }
     bool isCaseAvailable() const { return !isStatus(Component::Case, BatteryStatus::Disconnected); }
 
-    // Case battery from BLE manufacturer-data path. parseEncryptedPacket
-    // only updates Case when a pod is docked (podInCase=true), which
-    // means a connected user with pods in their ears never gets case
-    // level updates even when the lid is open and the case is
-    // broadcasting its battery via BLE adv. This setter feeds the
-    // BLE-parsed level + charging directly so the case row in PodsMenu
-    // can show real numbers during lid-open events. level=-1 from BLE
-    // means "case battery unknown" (nibble == 15) — caller should skip
-    // those packets to avoid overwriting a valid prior reading.
-    void setCaseFromBle(int level, bool charging)
-    {
-        if (level < 0 || level > 100) return;
-        const BatteryStatus newStatus =
-            charging ? BatteryStatus::Charging : BatteryStatus::Discharging;
-        const auto current = states.value(Component::Case);
-        if (current.level == level && current.status == newStatus) return;
-        states[Component::Case] = {static_cast<quint8>(level), newStatus};
-        emit batteryStatusChanged();
-    }
     quint8 getHeadsetLevel() const { return states.value(Component::Headset).level; }
     bool isHeadsetCharging() const { return isStatus(Component::Headset, BatteryStatus::Charging); }
     bool isHeadsetAvailable() const { return !isStatus(Component::Headset, BatteryStatus::Disconnected); }
@@ -299,13 +216,6 @@ private:
     bool isStatus(Component component, BatteryStatus status) const
     {
         return states.value(component).status == status;
-    }
-
-    std::pair<bool, int> formatBattery(unsigned char byteVal)
-    {
-        bool charging = (byteVal & 0x80) != 0;
-        int level = byteVal & 0x7F;
-        return std::make_pair(charging, level);
     }
 
     QMap<Component, BatteryState> states;

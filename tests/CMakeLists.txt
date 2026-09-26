@@ -77,11 +77,6 @@ openpods_add_test(tst_controlreconnect
     ../controlreconnect.hpp
 )
 
-openpods_add_test(tst_scanduty
-    tst_scanduty.cpp
-    ../scanduty.hpp
-)
-
 openpods_add_test(tst_snaptogrid
     tst_snaptogrid.cpp
     ../snaptogrid.hpp
@@ -114,18 +109,13 @@ target_compile_definitions(tst_ctl PRIVATE
 )
 add_dependencies(tst_ctl librepods-ctl)
 
-# Stochastic stress over protocol parsers — pulls in ble/bleutils
-# which itself wants OpenSSL EVP for AES round-trips. Skipping AUTOMOC
-# headers we don't need; bleutils.h is a free function header.
-find_package(OpenSSL REQUIRED)
+# Stochastic stress over protocol parsers.
 qt_add_executable(tst_stress
     tst_stress.cpp
     ../BasicControlCommand.hpp
-    ../ble/bleutils.cpp
-    ../ble/bleutils.h
 )
 target_link_libraries(tst_stress
-    PRIVATE Qt6::Test Qt6::Core OpenSSL::SSL OpenSSL::Crypto
+    PRIVATE Qt6::Test Qt6::Core
 )
 target_include_directories(tst_stress PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/..)
 set_target_properties(tst_stress PROPERTIES AUTOMOC ON)
@@ -150,11 +140,3 @@ target_link_libraries(tst_qrcodeimageprovider
 target_include_directories(tst_qrcodeimageprovider PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/..)
 set_target_properties(tst_qrcodeimageprovider PROPERTIES AUTOMOC ON)
 add_test(NAME tst_qrcodeimageprovider COMMAND tst_qrcodeimageprovider -platform offscreen)
-
-openpods_add_test(tst_blemanager
-    tst_blemanager.cpp
-    ../ble/blemanager.cpp
-    ../ble/blemanager.h
-)
-# Only test that parses a QBluetoothDeviceInfo, so only one needing the module.
-target_link_libraries(tst_blemanager PRIVATE Qt6::Bluetooth)
