@@ -14,6 +14,10 @@ inline constexpr int idleWindowMs = 8000;
 // scan window is filed as a scan result instead of connecting, so the first scan waits.
 inline constexpr int bootDelayMs = 45000;
 
+// Allowance on top of scanWindowMs before a window is considered lost. The agent's own LE timeout
+// is the normal way a window ends; this only covers the case where that timeout never arrives.
+inline constexpr int guardSlackMs = 2000;
+
 enum class Phase
 {
     Stopped,
