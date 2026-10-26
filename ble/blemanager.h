@@ -79,6 +79,7 @@ private slots:
     void onDeviceDiscovered(const QBluetoothDeviceInfo &info);
     void onScanFinished();
     void onIdleFinished();
+    void onWindowOverrun();
     void onErrorOccurred(QBluetoothDeviceDiscoveryAgent::Error error);
 
 signals:
@@ -91,6 +92,12 @@ private:
     // happens in BleManager::BleManager() via parented `new`.
     QBluetoothDeviceDiscoveryAgent *discoveryAgent = nullptr;
     QTimer *idleTimer = nullptr;
+    // Watches a single scan window. QBluetoothDeviceDiscoveryAgent's own LE
+    // timeout can be lost when another process changes the adapter's discovery
+    // state mid-window: start() then returns early and no finished() arrives,
+    // so without this the cycle stays in Scanning and BlueZ keeps the discovery
+    // session open, which suspends the kernel's passive accept list scan.
+    QTimer *windowGuard = nullptr;
     ScanDuty::Cycle duty;
 };
 

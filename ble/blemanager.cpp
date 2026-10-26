@@ -1,9 +1,59 @@
 #include "blemanager.h"
 #include "enums.h"
 #include <QDebug>
+#include <QDBusArgument>
+#include <QDBusConnection>
+#include <QDBusMessage>
+#include <QDBusObjectPath>
 #include <QTimer>
 #include "logger.h"
 #include <QMap>
+
+namespace
+{
+
+typedef QMap<QDBusObjectPath, QMap<QString, QVariantMap>> ManagedObjectList;
+
+// bluetoothd answers in milliseconds; never let a wedged bus hold the window guard.
+constexpr int stopDiscoveryTimeoutMs = 1000;
+
+// BlueZ keeps one discovery session per D-Bus client, so this only drops
+// librepods' own session - a scan owned by another client keeps the adapter
+// discovering, which is that client's business. Needed because Qt's discovery
+// manager can skip StopDiscovery when it registered while somebody else was
+// already scanning, and the session then outlives the window.
+void releaseDiscoverySessions()
+{
+    QDBusConnection bus = QDBusConnection::systemBus();
+    QDBusMessage request = QDBusMessage::createMethodCall(
+        QStringLiteral("org.bluez"), QStringLiteral("/"),
+        QStringLiteral("org.freedesktop.DBus.ObjectManager"),
+        QStringLiteral("GetManagedObjects"));
+    QDBusMessage reply = bus.call(request, QDBus::Block, stopDiscoveryTimeoutMs);
+    if (reply.type() == QDBusMessage::ErrorMessage || reply.arguments().isEmpty())
+    {
+        return;
+    }
+
+    ManagedObjectList objects;
+    reply.arguments().constFirst().value<QDBusArgument>() >> objects;
+
+    for (auto it = objects.constBegin(); it != objects.constEnd(); ++it)
+    {
+        if (!it.value().contains(QStringLiteral("org.bluez.Adapter1")))
+        {
+            continue;
+        }
+
+        QDBusMessage stop = QDBusMessage::createMethodCall(
+            QStringLiteral("org.bluez"), it.key().path(),
+            QStringLiteral("org.bluez.Adapter1"), QStringLiteral("StopDiscovery"));
+        // "No discovery started" just means this client had no session; ignore it.
+        bus.call(stop, QDBus::Block, stopDiscoveryTimeoutMs);
+    }
+}
+
+} // namespace
 
 // Fixed header data[0] through data[10], then a 16-byte encrypted payload.
 static constexpr int proximityPairingBytes = 11 + 16;
@@ -97,6 +147,10 @@ BleManager::BleManager(QObject *parent) : QObject(parent)
     idleTimer->setSingleShot(true);
     connect(idleTimer, &QTimer::timeout, this, &BleManager::onIdleFinished);
 
+    windowGuard = new QTimer(this);
+    windowGuard->setSingleShot(true);
+    connect(windowGuard, &QTimer::timeout, this, &BleManager::onWindowOverrun);
+
     connect(discoveryAgent, &QBluetoothDeviceDiscoveryAgent::deviceDiscovered,
             this, &BleManager::onDeviceDiscovered);
     connect(discoveryAgent, &QBluetoothDeviceDiscoveryAgent::finished,
@@ -121,6 +175,7 @@ void BleManager::startScan()
     // A start inside the gap has to disarm the pending resume, or the next tick starts a second window.
     idleTimer->stop();
     discoveryAgent->start(QBluetoothDeviceDiscoveryAgent::LowEnergyMethod);
+    windowGuard->start(ScanDuty::scanWindowMs + ScanDuty::guardSlackMs);
 }
 
 void BleManager::stopScan()
@@ -128,6 +183,7 @@ void BleManager::stopScan()
     LOG_DEBUG("Stopping BLE scan...");
     duty.cancel();
     idleTimer->stop();
+    windowGuard->stop();
     discoveryAgent->stop();
 }
 
@@ -237,6 +293,9 @@ void BleManager::onDeviceDiscovered(const QBluetoothDeviceInfo &info)
 
 void BleManager::onScanFinished()
 {
+    LOG_DEBUG("BLE scan window finished");
+    windowGuard->stop();
+    releaseDiscoverySessions();
     if (!duty.windowFinished())
     {
         return;
@@ -251,6 +310,24 @@ void BleManager::onIdleFinished()
         return;
     }
     discoveryAgent->start(QBluetoothDeviceDiscoveryAgent::LowEnergyMethod);
+    windowGuard->start(ScanDuty::scanWindowMs + ScanDuty::guardSlackMs);
+}
+
+void BleManager::onWindowOverrun()
+{
+    // The window's own timeout did not arrive, which happens when another process
+    // changes the adapter's discovery state while the agent is starting: Qt's
+    // start() bails out early and never arms its LE timer. Stop the agent so the
+    // session is released, then make sure the cycle still advances even if no
+    // finished() comes back.
+    LOG_WARN("BLE scan window overran, forcing stop");
+    discoveryAgent->stop();
+    releaseDiscoverySessions();
+
+    if (duty.phase() == ScanDuty::Phase::Scanning && duty.windowFinished())
+    {
+        idleTimer->start(ScanDuty::idleWindowMs);
+    }
 }
 
 void BleManager::onErrorOccurred(QBluetoothDeviceDiscoveryAgent::Error error)
